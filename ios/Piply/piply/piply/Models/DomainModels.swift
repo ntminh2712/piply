@@ -91,6 +91,8 @@ struct AnalyticsSummary: Codable, Equatable, Sendable {
     var profitFactor: Double? // Gross profit / Gross loss
     var avgWin: Decimal? // Average winning trade
     var avgLoss: Decimal? // Average losing trade
+    var expectancy: Decimal? // Expected value per trade
+    var avgRR: Double? // Average Risk:Reward ratio
     var currentRisk: Decimal? // Current risk percentage
     var losingStreak: Int? // Current losing streak
     var maxLosingStreak: Int? // Maximum losing streak
@@ -141,6 +143,92 @@ struct PnlSeries: Codable, Equatable, Sendable {
 
     let bucket: Bucket
     let points: [PnlPoint]
+}
+
+// MARK: - Advanced Analytics
+
+struct TimeAnalysis: Codable, Equatable, Sendable {
+    struct HourlyPnL: Codable, Equatable, Sendable, Identifiable {
+        var id: Int { hour }
+        let hour: Int // 0-23
+        let pnl: Decimal
+        let tradeCount: Int
+        let winRate: Double
+    }
+    
+    struct DayOfWeekPnL: Codable, Equatable, Sendable, Identifiable {
+        var id: Int { dayOfWeek }
+        let dayOfWeek: Int // 1-7 (Monday = 1)
+        let pnl: Decimal
+        let tradeCount: Int
+        let winRate: Double
+    }
+    
+    struct SessionStats: Codable, Equatable, Sendable {
+        let asia: SessionStat
+        let london: SessionStat
+        let newYork: SessionStat
+    }
+    
+    struct SessionStat: Codable, Equatable, Sendable {
+        let pnl: Decimal
+        let tradeCount: Int
+        let winRate: Double
+    }
+    
+    let hourlyPnL: [HourlyPnL]
+    let dayOfWeekPnL: [DayOfWeekPnL]
+    let sessionStats: SessionStats
+}
+
+struct PairAnalysis: Codable, Equatable, Sendable {
+    struct PairPerformance: Codable, Equatable, Sendable, Identifiable {
+        var id: String { symbol }
+        let symbol: String
+        let pnl: Decimal
+        let tradeCount: Int
+        let winRate: Double
+        let avgWin: Decimal
+        let avgLoss: Decimal
+    }
+    
+    let pairs: [PairPerformance]
+    let topPairs: [PairPerformance] // Top 5 by P/L
+    let worstPairs: [PairPerformance] // Worst 5 by P/L
+}
+
+struct BehaviorAnalysis: Codable, Equatable, Sendable {
+    struct HoldTimeStats: Codable, Equatable, Sendable {
+        let avgWinHoldTime: TimeInterval // seconds
+        let avgLossHoldTime: TimeInterval
+        let medianWinHoldTime: TimeInterval
+        let medianLossHoldTime: TimeInterval
+    }
+    
+    let holdTimeStats: HoldTimeStats
+    let revengeTradingDetected: Bool
+    let overtradingDetected: Bool
+    let avgSlippage: Decimal?
+    let avgSpreadImpact: Decimal?
+}
+
+struct RiskAnalysis: Codable, Equatable, Sendable {
+    struct RiskPerTrade: Codable, Equatable, Sendable {
+        let avgRiskPercent: Double
+        let maxRiskPercent: Double
+        let minRiskPercent: Double
+    }
+    
+    struct ExposureByPair: Codable, Equatable, Sendable, Identifiable {
+        var id: String { symbol }
+        let symbol: String
+        let exposurePercent: Double
+    }
+    
+    let riskPerTrade: RiskPerTrade
+    let exposureByPair: [ExposureByPair]
+    let consecutiveLosses: Int
+    let dailyLossLimitHitRate: Double // 0-1
 }
 
 // MARK: - Subscription

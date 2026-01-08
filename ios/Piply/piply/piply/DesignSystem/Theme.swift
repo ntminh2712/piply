@@ -72,6 +72,41 @@ struct Card: ViewModifier {
     }
 }
 
+// Tooltip Sheet Component
+struct TooltipSheet: View {
+    let title: String
+    let tooltip: String
+    @Environment(\.dismiss) private var dismiss
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+            HStack {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(DS.ColorToken.textPrimary)
+                Spacer()
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.title3)
+                        .foregroundStyle(DS.ColorToken.textTertiary)
+                }
+            }
+            
+            Text(tooltip)
+                .font(.subheadline)
+                .foregroundStyle(DS.ColorToken.textSecondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(DS.Spacing.l)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(DS.ColorToken.background)
+        .presentationDetents([.height(200), .medium])
+        .presentationDragIndicator(.visible)
+    }
+}
+
 extension View {
     func card(elevated: Bool = false, color: Color? = nil) -> some View {
         modifier(Card(elevated: elevated, color: color))
@@ -85,27 +120,63 @@ struct MetricCard: View {
     let change: String?
     let icon: String
     let color: Color
+    let tooltip: String?
+    let percentage: String?
+    
+    init(title: String, value: String, change: String? = nil, icon: String, color: Color, tooltip: String? = nil, percentage: String? = nil) {
+        self.title = title
+        self.value = value
+        self.change = change
+        self.icon = icon
+        self.color = color
+        self.tooltip = tooltip
+        self.percentage = percentage
+    }
+    
+    @State private var showTooltip = false
     
     var body: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.m) {
+        VStack(alignment: .leading, spacing: DS.Spacing.s) {
             HStack {
                 Image(systemName: icon)
                     .font(.title3)
                     .foregroundStyle(color)
-                    .frame(width: 40, height: 40)
-                    .background(color.opacity(0.15))
-                    .clipShape(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
+                    .frame(width: 36, height: 36)
+                    .background(color.opacity(0.2))
+                    .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 Spacer()
             }
             
-            VStack(alignment: .leading, spacing: 4) {
-                Text(value)
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(DS.ColorToken.textPrimary)
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(value)
+                        .font(.title2.weight(.bold))
+                        .foregroundStyle(DS.ColorToken.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    
+                    if let percentage = percentage {
+                        Text(percentage)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(DS.ColorToken.textSecondary)
+                    }
+                }
                 
-                Text(title)
-                    .font(.subheadline)
-                    .foregroundStyle(DS.ColorToken.textSecondary)
+                HStack(spacing: 4) {
+                    Text(title)
+                        .font(.caption)
+                        .foregroundStyle(DS.ColorToken.textSecondary)
+                    
+                    if let tooltip = tooltip {
+                        Button {
+                            showTooltip = true
+                        } label: {
+                            Image(systemName: "info.circle.fill")
+                                .font(.caption2)
+                                .foregroundStyle(DS.ColorToken.textTertiary)
+                        }
+                    }
+                }
                 
                 if let change = change {
                     HStack(spacing: 4) {
@@ -115,11 +186,26 @@ struct MetricCard: View {
                             .font(.caption.weight(.semibold))
                     }
                     .foregroundStyle(change.hasPrefix("+") ? DS.ColorToken.success : DS.ColorToken.danger)
+                    .padding(.top, 2)
+                } else {
+                    // Spacer để đảm bảo chiều cao đều nhau
+                    Spacer()
+                        .frame(height: 20)
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card(color: color)
+        .frame(maxWidth: .infinity, minHeight: 120, alignment: .leading)
+        .padding(DS.Spacing.m)
+        .background(color.opacity(0.12))
+        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: DS.Radius.l, style: .continuous)
+                .stroke(DS.ColorToken.border, lineWidth: 1)
+        )
+        .shadow(color: DS.Shadow.card.color, radius: DS.Shadow.card.radius, x: 0, y: DS.Shadow.card.y)
+        .sheet(isPresented: $showTooltip) {
+            TooltipSheet(title: title, tooltip: tooltip ?? "")
+        }
     }
 }
 

@@ -428,7 +428,9 @@ actor MockAPIClient: APIClient {
         
         // Profit factor
         let grossProfit = profits.filter { $0 > 0 }.reduce(Decimal(0), +)
-        let grossLoss = abs(profits.filter { $0 < 0 }.reduce(Decimal(0), +))
+        let grossLossRaw = profits.filter { $0 < 0 }.reduce(Decimal(0), +)
+        // Get absolute value (Decimal doesn't conform to Comparable for abs())
+        let grossLoss = grossLossRaw < 0 ? -grossLossRaw : grossLossRaw
         let profitFactor = grossLoss > 0 ? (grossProfit as NSDecimalNumber).doubleValue / (grossLoss as NSDecimalNumber).doubleValue : nil
         
         // Avg win/loss
@@ -470,6 +472,24 @@ actor MockAPIClient: APIClient {
         
         // Overtrade warning (if more than 10 trades today)
         let overtradeWarning = todayTrades.count > 10
+        
+        // Expectancy = (Win Rate × Avg Win) - (Loss Rate × Avg Loss)
+        let lossRate = 1.0 - winRate
+        let winRateDecimal = Decimal(winRate)
+        let lossRateDecimal = Decimal(lossRate)
+        let avgWinValue = avgWin ?? 0
+        let avgLossRaw = avgLoss ?? 0
+        // Get absolute value of avgLoss (Decimal doesn't conform to Comparable for abs())
+        let avgLossValue = avgLossRaw < 0 ? -avgLossRaw : avgLossRaw
+        let expectancy = (winRateDecimal * avgWinValue) - (lossRateDecimal * avgLossValue)
+        let expectancyDecimal = roundDecimal(expectancy, toPlaces: 2)
+        
+        // Avg R:R (simplified: avgWin / avgLoss)
+        let avgWinDouble = (avgWin ?? 0) as NSDecimalNumber
+        let avgLossDouble = (avgLoss ?? 0) as NSDecimalNumber
+        let avgWinAbs = abs(avgWinDouble.doubleValue)
+        let avgLossAbs = abs(avgLossDouble.doubleValue)
+        let avgRR = avgLossAbs > 0 ? avgWinAbs / avgLossAbs : nil
 
         return AnalyticsSummary(
             pnlTotal: pnl,
@@ -481,6 +501,8 @@ actor MockAPIClient: APIClient {
             profitFactor: profitFactor,
             avgWin: avgWin,
             avgLoss: avgLoss,
+            expectancy: expectancyDecimal,
+            avgRR: avgRR,
             currentRisk: currentRisk,
             losingStreak: currentStreak > 0 ? currentStreak : nil,
             maxLosingStreak: maxStreak > 0 ? maxStreak : nil,
@@ -701,6 +723,322 @@ actor MockAPIClient: APIClient {
         }
         
         return insights
+    }
+    
+    // MARK: - Advanced Analytics
+    
+    func getTimeAnalysis(accountId: UUID) async throws -> TimeAnalysis {
+        _ = try requireSession()
+        await simulateLatency()
+        
+        seedTradesIfNeeded(for: accountId)
+        let allTrades = tradesByAccount[accountId] ?? []
+        let closedTrades = allTrades.filter { $0.closeTime != nil }
+        
+        let calendar = Calendar.current
+        
+        // Hourly P/L
+        var hourlyPnL: [Int: (pnl: Decimal, count: Int, wins: Int)] = [:]
+        for trade in closedTrades {
+            guard let closeTime = trade.closeTime else { continue }
+            let hour = calendar.component(.hour, from: closeTime)
+            let profit = trade.profit ?? 0
+            let isWin = profit > 0
+            
+            if hourlyPnL[hour] == nil {
+                hourlyPnL[hour] = (pnl: 0, count: 0, wins: 0)
+            }
+            hourlyPnL[hour]?.pnl += profit
+            hourlyPnL[hour]?.count += 1
+            if isWin { hourlyPnL[hour]?.wins += 1 }
+        }
+        
+        let hourlyPnLArray = (0..<24).map { hour in
+            let data = hourlyPnL[hour] ?? (pnl: 0, count: 0, wins: 0)
+            let winRate = data.count > 0 ? Double(data.wins) / Double(data.count) : 0.0
+            return TimeAnalysis.HourlyPnL(
+                hour: hour,
+                pnl: roundDecimal(data.pnl, toPlaces: 2),
+                tradeCount: data.count,
+                winRate: winRate
+            )
+        }
+        
+        // Day of Week P/L
+        var dayOfWeekPnL: [Int: (pnl: Decimal, count: Int, wins: Int)] = [:]
+        for trade in closedTrades {
+            guard let closeTime = trade.closeTime else { continue }
+            let dayOfWeek = calendar.component(.weekday, from: closeTime) // 1=Sunday, 2=Monday...
+            let adjustedDay = dayOfWeek == 1 ? 7 : dayOfWeek - 1 // Convert to Mon=1, Sun=7
+            let profit = trade.profit ?? 0
+            let isWin = profit > 0
+            
+            if dayOfWeekPnL[adjustedDay] == nil {
+                dayOfWeekPnL[adjustedDay] = (pnl: 0, count: 0, wins: 0)
+            }
+            dayOfWeekPnL[adjustedDay]?.pnl += profit
+            dayOfWeekPnL[adjustedDay]?.count += 1
+            if isWin { dayOfWeekPnL[adjustedDay]?.wins += 1 }
+        }
+        
+        let dayOfWeekPnLArray = (1...7).map { day in
+            let data = dayOfWeekPnL[day] ?? (pnl: 0, count: 0, wins: 0)
+            let winRate = data.count > 0 ? Double(data.wins) / Double(data.count) : 0.0
+            return TimeAnalysis.DayOfWeekPnL(
+                dayOfWeek: day,
+                pnl: roundDecimal(data.pnl, toPlaces: 2),
+                tradeCount: data.count,
+                winRate: winRate
+            )
+        }
+        
+        // Session Stats (simplified: Asia 0-8, London 8-16, NY 16-24)
+        var asiaPnL: Decimal = 0
+        var asiaCount = 0
+        var asiaWins = 0
+        var londonPnL: Decimal = 0
+        var londonCount = 0
+        var londonWins = 0
+        var nyPnL: Decimal = 0
+        var nyCount = 0
+        var nyWins = 0
+        
+        for trade in closedTrades {
+            guard let closeTime = trade.closeTime else { continue }
+            let hour = calendar.component(.hour, from: closeTime)
+            let profit = trade.profit ?? 0
+            let isWin = profit > 0
+            
+            if hour >= 0 && hour < 8 {
+                asiaPnL += profit
+                asiaCount += 1
+                if isWin { asiaWins += 1 }
+            } else if hour >= 8 && hour < 16 {
+                londonPnL += profit
+                londonCount += 1
+                if isWin { londonWins += 1 }
+            } else {
+                nyPnL += profit
+                nyCount += 1
+                if isWin { nyWins += 1 }
+            }
+        }
+        
+        let sessionStats = TimeAnalysis.SessionStats(
+            asia: TimeAnalysis.SessionStat(
+                pnl: roundDecimal(asiaPnL, toPlaces: 2),
+                tradeCount: asiaCount,
+                winRate: asiaCount > 0 ? Double(asiaWins) / Double(asiaCount) : 0.0
+            ),
+            london: TimeAnalysis.SessionStat(
+                pnl: roundDecimal(londonPnL, toPlaces: 2),
+                tradeCount: londonCount,
+                winRate: londonCount > 0 ? Double(londonWins) / Double(londonCount) : 0.0
+            ),
+            newYork: TimeAnalysis.SessionStat(
+                pnl: roundDecimal(nyPnL, toPlaces: 2),
+                tradeCount: nyCount,
+                winRate: nyCount > 0 ? Double(nyWins) / Double(nyCount) : 0.0
+            )
+        )
+        
+        return TimeAnalysis(
+            hourlyPnL: hourlyPnLArray,
+            dayOfWeekPnL: dayOfWeekPnLArray,
+            sessionStats: sessionStats
+        )
+    }
+    
+    func getPairAnalysis(accountId: UUID) async throws -> PairAnalysis {
+        _ = try requireSession()
+        await simulateLatency()
+        
+        seedTradesIfNeeded(for: accountId)
+        let allTrades = tradesByAccount[accountId] ?? []
+        let closedTrades = allTrades.filter { $0.closeTime != nil }
+        
+        // Group by symbol
+        var pairData: [String: (pnl: Decimal, trades: [TradeDetail], wins: Int)] = [:]
+        for trade in closedTrades {
+            let symbol = trade.symbol
+            let profit = trade.profit ?? 0
+            let isWin = profit > 0
+            
+            if pairData[symbol] == nil {
+                pairData[symbol] = (pnl: 0, trades: [], wins: 0)
+            }
+            pairData[symbol]?.pnl += profit
+            pairData[symbol]?.trades.append(trade)
+            if isWin { pairData[symbol]?.wins += 1 }
+        }
+        
+        let pairs = pairData.map { symbol, data in
+            let winTrades = data.trades.filter { ($0.profit ?? 0) > 0 }
+            let lossTrades = data.trades.filter { ($0.profit ?? 0) < 0 }
+            let avgWin = winTrades.isEmpty ? Decimal(0) : roundDecimal(winTrades.map { $0.profit ?? 0 }.reduce(Decimal(0), +) / Decimal(winTrades.count), toPlaces: 2)
+            // Get absolute value of losses (Decimal doesn't conform to Comparable for abs())
+            let avgLoss = lossTrades.isEmpty ? Decimal(0) : roundDecimal(lossTrades.map { (trade: TradeDetail) -> Decimal in
+                let p = trade.profit ?? 0
+                return p < 0 ? -p : p
+            }.reduce(Decimal(0), +) / Decimal(lossTrades.count), toPlaces: 2)
+            
+            return PairAnalysis.PairPerformance(
+                symbol: symbol,
+                pnl: roundDecimal(data.pnl, toPlaces: 2),
+                tradeCount: data.trades.count,
+                winRate: data.trades.count > 0 ? Double(data.wins) / Double(data.trades.count) : 0.0,
+                avgWin: avgWin,
+                avgLoss: avgLoss
+            )
+        }.sorted { $0.pnl > $1.pnl }
+        
+        let topPairs = Array(pairs.prefix(5))
+        let worstPairs = Array(pairs.suffix(5).reversed())
+        
+        return PairAnalysis(
+            pairs: pairs,
+            topPairs: topPairs,
+            worstPairs: worstPairs
+        )
+    }
+    
+    func getBehaviorAnalysis(accountId: UUID) async throws -> BehaviorAnalysis {
+        _ = try requireSession()
+        await simulateLatency()
+        
+        seedTradesIfNeeded(for: accountId)
+        let allTrades = tradesByAccount[accountId] ?? []
+        let closedTrades = allTrades.filter { $0.closeTime != nil }
+        
+        // Hold time analysis
+        var winHoldTimes: [TimeInterval] = []
+        var lossHoldTimes: [TimeInterval] = []
+        
+        for trade in closedTrades {
+            guard let closeTime = trade.closeTime else { continue }
+            let holdTime = closeTime.timeIntervalSince(trade.openTime)
+            let profit = trade.profit ?? 0
+            
+            if profit > 0 {
+                winHoldTimes.append(holdTime)
+            } else if profit < 0 {
+                lossHoldTimes.append(holdTime)
+            }
+        }
+        
+        let avgWinHoldTime = winHoldTimes.isEmpty ? 0 : winHoldTimes.reduce(0, +) / Double(winHoldTimes.count)
+        let avgLossHoldTime = lossHoldTimes.isEmpty ? 0 : lossHoldTimes.reduce(0, +) / Double(lossHoldTimes.count)
+        let medianWinHoldTime = winHoldTimes.isEmpty ? 0 : winHoldTimes.sorted()[winHoldTimes.count / 2]
+        let medianLossHoldTime = lossHoldTimes.isEmpty ? 0 : lossHoldTimes.sorted()[lossHoldTimes.count / 2]
+        
+        // Revenge trading: losing trades held 2x longer
+        let revengeTradingDetected = !lossHoldTimes.isEmpty && !winHoldTimes.isEmpty && avgLossHoldTime > avgWinHoldTime * 1.8
+        
+        // Overtrading: more than 10 trades in last 24 hours
+        let last24Hours = Date().addingTimeInterval(-86400)
+        let recentTrades = closedTrades.filter { ($0.closeTime ?? $0.openTime) > last24Hours }
+        let overtradingDetected = recentTrades.count > 10
+        
+        return BehaviorAnalysis(
+            holdTimeStats: BehaviorAnalysis.HoldTimeStats(
+                avgWinHoldTime: avgWinHoldTime,
+                avgLossHoldTime: avgLossHoldTime,
+                medianWinHoldTime: medianWinHoldTime,
+                medianLossHoldTime: medianLossHoldTime
+            ),
+            revengeTradingDetected: revengeTradingDetected,
+            overtradingDetected: overtradingDetected,
+            avgSlippage: nil, // Not available in mock
+            avgSpreadImpact: nil // Not available in mock
+        )
+    }
+    
+    func getRiskAnalysis(accountId: UUID) async throws -> RiskAnalysis {
+        _ = try requireSession()
+        await simulateLatency()
+        
+        seedTradesIfNeeded(for: accountId)
+        let allTrades = tradesByAccount[accountId] ?? []
+        let closedTrades = allTrades.filter { $0.closeTime != nil }
+        
+        let startingEquity = Decimal(10000)
+        var riskPercents: [Double] = []
+        var pairExposure: [String: Decimal] = [:]
+        var consecutiveLosses = 0
+        var maxConsecutiveLosses = 0
+        var tempConsecutive = 0
+        
+        // Calculate risk per trade (simplified: based on profit as % of equity)
+        var runningEquity = startingEquity
+        for trade in closedTrades.sorted(by: { ($0.closeTime ?? $0.openTime) < ($1.closeTime ?? $1.openTime) }) {
+            let profit = trade.profit ?? 0
+            let profitDouble = (profit as NSDecimalNumber).doubleValue
+            let equityDouble = (runningEquity as NSDecimalNumber).doubleValue
+            let riskPercent = abs(profitDouble / equityDouble * 100)
+            riskPercents.append(riskPercent)
+            runningEquity += profit
+            
+            // Track exposure by pair
+            let volume = trade.volume ?? 0
+            pairExposure[trade.symbol, default: 0] += volume
+            
+            // Track consecutive losses
+            if profit < 0 {
+                tempConsecutive += 1
+                maxConsecutiveLosses = max(maxConsecutiveLosses, tempConsecutive)
+            } else {
+                if tempConsecutive > consecutiveLosses {
+                    consecutiveLosses = tempConsecutive
+                }
+                tempConsecutive = 0
+            }
+        }
+        if tempConsecutive > consecutiveLosses {
+            consecutiveLosses = tempConsecutive
+        }
+        
+        let avgRisk = riskPercents.isEmpty ? 0 : riskPercents.reduce(0, +) / Double(riskPercents.count)
+        let maxRisk = riskPercents.max() ?? 0
+        let minRisk = riskPercents.min() ?? 0
+        
+        // Calculate exposure % by pair
+        let totalExposure = pairExposure.values.reduce(Decimal(0), +)
+        let exposureByPair = pairExposure.map { symbol, exposure in
+            let percent = totalExposure > 0 ? (exposure as NSDecimalNumber).doubleValue / (totalExposure as NSDecimalNumber).doubleValue * 100 : 0
+            return RiskAnalysis.ExposureByPair(symbol: symbol, exposurePercent: percent)
+        }.sorted { $0.exposurePercent > $1.exposurePercent }
+        
+        // Daily loss limit hit rate (simplified: days with loss > 5% of equity)
+        let calendar = Calendar.current
+        var dailyLosses: [Decimal] = []
+        var daysWithLargeLoss = 0
+        var totalDays = 0
+        
+        let groupedByDay = Dictionary(grouping: closedTrades) { trade in
+            calendar.startOfDay(for: trade.closeTime ?? trade.openTime)
+        }
+        
+        for (_, trades) in groupedByDay {
+            let dayPnL = trades.compactMap { $0.profit }.reduce(Decimal(0), +)
+            dailyLosses.append(dayPnL)
+            totalDays += 1
+            if dayPnL < -500 { // 5% of 10000
+                daysWithLargeLoss += 1
+            }
+        }
+        
+        let dailyLossLimitHitRate = totalDays > 0 ? Double(daysWithLargeLoss) / Double(totalDays) : 0.0
+        
+        return RiskAnalysis(
+            riskPerTrade: RiskAnalysis.RiskPerTrade(
+                avgRiskPercent: avgRisk,
+                maxRiskPercent: maxRisk,
+                minRiskPercent: minRisk
+            ),
+            exposureByPair: exposureByPair,
+            consecutiveLosses: consecutiveLosses,
+            dailyLossLimitHitRate: dailyLossLimitHitRate
+        )
     }
     
     private func formatDecimal(_ v: Decimal) -> String {

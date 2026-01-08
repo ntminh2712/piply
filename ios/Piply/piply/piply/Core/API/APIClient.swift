@@ -34,6 +34,12 @@ protocol APIClient: Sendable {
     func getEquitySeries(accountId: UUID, from: Date?, to: Date?) async throws -> EquitySeries
     func getOpenTrades(accountId: UUID) async throws -> [Trade]
     func getInsights(accountId: UUID) async throws -> [Insight]
+    
+    // Advanced Analytics
+    func getTimeAnalysis(accountId: UUID) async throws -> TimeAnalysis
+    func getPairAnalysis(accountId: UUID) async throws -> PairAnalysis
+    func getBehaviorAnalysis(accountId: UUID) async throws -> BehaviorAnalysis
+    func getRiskAnalysis(accountId: UUID) async throws -> RiskAnalysis
 }
 
 
