@@ -12,8 +12,9 @@ struct SettingsView: View {
         List {
             Section("Account") {
                 Text("Logged in as")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(DS.ColorToken.textSecondary)
                 Text(env.session?.email ?? "—")
+                    .foregroundStyle(DS.ColorToken.textPrimary)
             }
 
             Section("Subscription") {
@@ -41,7 +42,7 @@ struct SettingsView: View {
                     }
                 } else if let subscriptionError {
                     Text(subscriptionError)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(DS.ColorToken.danger)
                 } else {
                     ProgressView()
                 }

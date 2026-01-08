@@ -33,7 +33,7 @@ struct AccountsView: View {
             if let error = vm.errorMessage {
                 Section {
                     Text(error)
-                        .foregroundStyle(.red)
+                        .foregroundStyle(DS.ColorToken.danger)
                 }
             }
 

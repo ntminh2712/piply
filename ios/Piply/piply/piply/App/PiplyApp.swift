@@ -8,6 +8,7 @@ struct PiplyApp: App {
         WindowGroup {
             AppRootView()
                 .environmentObject(env)
+                .preferredColorScheme(.dark) // Force dark mode to match dashboard
         }
     }
 }

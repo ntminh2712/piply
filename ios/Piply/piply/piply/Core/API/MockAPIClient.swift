@@ -19,8 +19,139 @@ actor MockAPIClient: APIClient {
     private var annotations: [UUID: TradeAnnotation] = [:] // tradeId -> annotation
     private var manualSyncCountToday = 0
     private var manualSyncWindowStart = Calendar.current.startOfDay(for: Date())
+    
+    // Initialize with mock data for development
+    init() {
+        // Auto-login for easier testing
+        session = Session(token: "mock_token_\(UUID().uuidString)", email: "demo@example.com")
+        
+        // Create mock accounts
+        let now = Date()
+        let account1 = TradingAccount(
+            id: UUID(),
+            broker: "IC Markets",
+            server: "ICMarkets-Demo",
+            accountId: "12345678",
+            status: .synced,
+            lastAttemptedSyncAt: now.addingTimeInterval(-3600),
+            lastSuccessfulSyncAt: now.addingTimeInterval(-3600),
+            lastErrorMessage: nil,
+            createdAt: now.addingTimeInterval(-86400 * 30),
+            updatedAt: now.addingTimeInterval(-3600)
+        )
+        
+        let account2 = TradingAccount(
+            id: UUID(),
+            broker: "FXTM",
+            server: "FXTM-Demo",
+            accountId: "87654321",
+            status: .synced,
+            lastAttemptedSyncAt: now.addingTimeInterval(-7200),
+            lastSuccessfulSyncAt: now.addingTimeInterval(-7200),
+            lastErrorMessage: nil,
+            createdAt: now.addingTimeInterval(-86400 * 15),
+            updatedAt: now.addingTimeInterval(-7200)
+        )
+        
+        accounts = [account1, account2]
+        
+        // Seed trades for accounts
+        seedTradesForAccount(account1.id, accountName: "IC Markets")
+        seedTradesForAccount(account2.id, accountName: "FXTM")
+    }
+    
+    private func seedTradesForAccount(_ accountId: UUID, accountName: String) {
+        let now = Date()
+        let calendar = Calendar.current
+        
+        // Generate trades for the last 30 days
+        var trades: [TradeDetail] = []
+        let symbols = ["XAUUSD", "EURUSD", "GBPUSD", "USDJPY", "US30", "BTCUSD", "ETHUSD"]
+        let sides: [TradeSide] = [.buy, .sell]
+        
+        for dayOffset in 0..<30 {
+            let dayDate = calendar.date(byAdding: .day, value: -dayOffset, to: now)!
+            let tradesPerDay = Int.random(in: 1...5)
+            
+            for tradeIndex in 0..<tradesPerDay {
+                let symbol = symbols.randomElement()!
+                let side = sides.randomElement()!
+                let openTime = calendar.date(byAdding: .hour, value: tradeIndex * 2, to: dayDate)!
+                let closeTime = calendar.date(byAdding: .minute, value: Int.random(in: 15...120), to: openTime)!
+                
+                // Generate realistic profit/loss
+                let basePriceRaw: Decimal = symbol.contains("USD") ? 1.0 : (symbol.contains("XAU") ? 2050 : 38000)
+                let priceChangePercent = Double.random(in: -2.0...2.0)
+                let volumeRaw = Double.random(in: 0.01...0.5)
+                let profitValue = Double.random(in: -100...200)
+                
+                // Round values appropriately
+                let basePrice = roundPrice(basePriceRaw, forSymbol: symbol)
+                let priceChange = Decimal(priceChangePercent / 100.0)
+                let closePriceRaw = basePrice * (Decimal(1.0) + priceChange)
+                let closePrice = roundPrice(closePriceRaw, forSymbol: symbol)
+                let volume = roundDecimalFromDouble(volumeRaw, toPlaces: 2)
+                let profit = roundDecimalFromDouble(profitValue, toPlaces: 2)
+                let sl = roundPrice(side == .buy ? basePrice * Decimal(0.99) : basePrice * Decimal(1.01), forSymbol: symbol)
+                let tp = roundPrice(side == .buy ? basePrice * Decimal(1.01) : basePrice * Decimal(0.99), forSymbol: symbol)
+                let commission = roundDecimalFromDouble(Double.random(in: -1.0...0), toPlaces: 2)
+                let swap = roundDecimalFromDouble(Double.random(in: -0.5...0.5), toPlaces: 2)
+                
+                let trade = TradeDetail(
+                    id: UUID(),
+                    tradingAccountId: accountId,
+                    symbol: symbol,
+                    side: side,
+                    openTime: openTime,
+                    closeTime: closeTime,
+                    openPrice: basePrice,
+                    closePrice: closePrice,
+                    volume: volume,
+                    sl: sl,
+                    tp: tp,
+                    commission: commission,
+                    swap: swap,
+                    profit: profit
+                )
+                trades.append(trade)
+                
+                // Add some annotations
+                if Bool.random() {
+                    annotations[trade.id] = TradeAnnotation(
+                        noteText: "Good entry point",
+                        tags: ["scalping", "trend"]
+                    )
+                }
+            }
+        }
+        
+        tradesByAccount[accountId] = trades.sorted { ($0.closeTime ?? $0.openTime) > ($1.closeTime ?? $1.openTime) }
+    }
 
     // MARK: - Helpers
+    
+    private func roundDecimal(_ value: Decimal, toPlaces places: Int = 2) -> Decimal {
+        var result = value
+        var rounded = Decimal()
+        NSDecimalRound(&rounded, &result, places, .bankers)
+        return rounded
+    }
+    
+    private func roundDecimalFromDouble(_ value: Double, toPlaces places: Int = 2) -> Decimal {
+        let multiplier = pow(10.0, Double(places))
+        let rounded = (value * multiplier).rounded() / multiplier
+        return roundDecimal(Decimal(rounded), toPlaces: places)
+    }
+    
+    private func roundPrice(_ value: Decimal, forSymbol symbol: String) -> Decimal {
+        // Forex: 5 decimal places, Gold: 2 decimal places, Indices: 2 decimal places
+        let places = symbol.contains("XAU") || symbol.contains("US30") ? 2 : 5
+        return roundDecimal(value, toPlaces: places)
+    }
+
+    func getCurrentSession() async -> Session? {
+        return session
+    }
 
     func setFlags(_ newFlags: Flags) async {
         self.flags = newFlags
@@ -60,63 +191,7 @@ actor MockAPIClient: APIClient {
 
     private func seedTradesIfNeeded(for accountId: UUID) {
         if tradesByAccount[accountId] != nil { return }
-
-        let now = Date()
-        let sample: [TradeDetail] = [
-            TradeDetail(
-                id: UUID(),
-                tradingAccountId: accountId,
-                symbol: "XAUUSD",
-                side: .buy,
-                openTime: now.addingTimeInterval(-60 * 60 * 24 * 10),
-                closeTime: now.addingTimeInterval(-60 * 60 * 24 * 10 + 60 * 22),
-                openPrice: 2050.10,
-                closePrice: 2056.40,
-                volume: 0.10,
-                sl: nil,
-                tp: nil,
-                commission: -0.5,
-                swap: 0,
-                profit: 62.3
-            ),
-            TradeDetail(
-                id: UUID(),
-                tradingAccountId: accountId,
-                symbol: "EURUSD",
-                side: .sell,
-                openTime: now.addingTimeInterval(-60 * 60 * 24 * 7),
-                closeTime: now.addingTimeInterval(-60 * 60 * 24 * 7 + 60 * 45),
-                openPrice: 1.0912,
-                closePrice: 1.0940,
-                volume: 0.20,
-                sl: 1.0960,
-                tp: 1.0880,
-                commission: -0.8,
-                swap: -0.1,
-                profit: -56.0
-            ),
-            TradeDetail(
-                id: UUID(),
-                tradingAccountId: accountId,
-                symbol: "US30",
-                side: .buy,
-                openTime: now.addingTimeInterval(-60 * 60 * 24 * 2),
-                closeTime: now.addingTimeInterval(-60 * 60 * 24 * 2 + 60 * 12),
-                openPrice: 38250,
-                closePrice: 38310,
-                volume: 0.05,
-                sl: nil,
-                tp: nil,
-                commission: 0,
-                swap: 0,
-                profit: 30.0
-            )
-        ]
-
-        tradesByAccount[accountId] = sample
-        for t in sample {
-            annotations[t.id] = TradeAnnotation(noteText: "", tags: [])
-        }
+        seedTradesForAccount(accountId, accountName: "New Account")
     }
 
     // MARK: - Auth
@@ -330,7 +405,8 @@ actor MockAPIClient: APIClient {
 
         let trades = try await listTrades(accountId: accountId, from: from, to: to, symbol: nil, outcome: nil, limit: 10_000)
         let profits = trades.compactMap { $0.profit }
-        let pnl = profits.reduce(Decimal(0), +)
+        let pnlRaw = profits.reduce(Decimal(0), +)
+        let pnl = roundDecimal(pnlRaw, toPlaces: 2)
         let wins = profits.filter { $0 > 0 }.count
         let count = trades.count
         let winRate = count == 0 ? 0 : Double(wins) / Double(count)
@@ -345,21 +421,55 @@ actor MockAPIClient: APIClient {
             let dd = peak - equity
             if dd > maxDD { maxDD = dd }
         }
+        let maxDDRounded = roundDecimal(maxDD, toPlaces: 2)
 
-        return AnalyticsSummary(pnlTotal: pnl, winRate: winRate, maxDrawdown: maxDD, tradeCount: count)
+        return AnalyticsSummary(pnlTotal: pnl, winRate: winRate, maxDrawdown: maxDDRounded, tradeCount: count)
     }
 
     func getPnlSeries(accountId: UUID, from: Date?, to: Date?, bucket: PnlSeries.Bucket) async throws -> PnlSeries {
         _ = try requireSession()
         await simulateLatency()
 
-        // Simple mocked series
-        let points: [PnlPoint] = [
-            PnlPoint(dayISO: "2026-01-01", pnl: 12),
-            PnlPoint(dayISO: "2026-01-02", pnl: -8),
-            PnlPoint(dayISO: "2026-01-03", pnl: 20),
-            PnlPoint(dayISO: "2026-01-04", pnl: 5)
-        ]
+        // Generate realistic PnL series from actual trades
+        seedTradesIfNeeded(for: accountId)
+        let allTrades = tradesByAccount[accountId] ?? []
+        
+        // Group trades by day
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        
+        var dailyPnL: [String: Decimal] = [:]
+        
+        for trade in allTrades {
+            let tradeDate = trade.closeTime ?? trade.openTime
+            let dayISO = dateFormatter.string(from: tradeDate)
+            let profit = trade.profit ?? 0
+            dailyPnL[dayISO, default: 0] += profit
+        }
+        
+        // Convert to PnlPoint array and sort by date, rounding PnL values
+        let points = dailyPnL.map { 
+            PnlPoint(dayISO: $0.key, pnl: roundDecimal($0.value, toPlaces: 2))
+        }
+        .sorted { $0.dayISO < $1.dayISO }
+        
+        // If no trades, return sample data
+        if points.isEmpty {
+            let calendar = Calendar.current
+            let now = Date()
+            var samplePoints: [PnlPoint] = []
+            
+            for dayOffset in 0..<30 {
+                let date = calendar.date(byAdding: .day, value: -dayOffset, to: now)!
+                let dayISO = dateFormatter.string(from: date)
+                let pnlRaw = Double.random(in: -50...100)
+                let pnl = roundDecimalFromDouble(pnlRaw, toPlaces: 2)
+                samplePoints.append(PnlPoint(dayISO: dayISO, pnl: pnl))
+            }
+            
+            return PnlSeries(bucket: bucket, points: samplePoints.reversed())
+        }
+        
         return PnlSeries(bucket: bucket, points: points)
     }
 }

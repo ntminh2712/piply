@@ -13,17 +13,20 @@ struct PrimaryButton: View {
                 if isLoading {
                     ProgressView()
                         .progressViewStyle(.circular)
+                        .tint(.white)
                 }
                 Text(title)
                     .font(.headline.weight(.semibold))
+                    .foregroundStyle(.white)
             }
             .frame(maxWidth: .infinity)
             .padding(.vertical, 12)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(DS.ColorToken.accent)
+        .background(DS.ColorToken.accent)
+        .foregroundStyle(.white)
         .clipShape(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
         .disabled(isLoading)
+        .opacity(isLoading ? 0.6 : 1.0)
     }
 }
 
@@ -47,6 +50,7 @@ struct InfoBanner: View {
                 .foregroundStyle(DS.ColorToken.info)
             Text(text)
                 .font(.subheadline)
+                .foregroundStyle(DS.ColorToken.textSecondary)
             Spacer(minLength: 0)
         }
         .card()
@@ -64,12 +68,13 @@ struct EmptyStateView: View {
         VStack(spacing: 12) {
             Image(systemName: systemImage)
                 .font(.system(size: 40))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.ColorToken.textTertiary)
             Text(title)
                 .font(.headline)
+                .foregroundStyle(DS.ColorToken.textPrimary)
             Text(message)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.ColorToken.textSecondary)
                 .multilineTextAlignment(.center)
 
             if let actionTitle, let action {
@@ -93,9 +98,10 @@ struct ErrorView: View {
                 .foregroundStyle(DS.ColorToken.warning)
             Text("Something went wrong")
                 .font(.headline)
+                .foregroundStyle(DS.ColorToken.textPrimary)
             Text(message)
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.ColorToken.textSecondary)
                 .multilineTextAlignment(.center)
             if let action {
                 SecondaryButton(title: actionTitle, action: action)

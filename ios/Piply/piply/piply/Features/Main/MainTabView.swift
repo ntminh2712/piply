@@ -17,6 +17,7 @@ struct MainTabView: View {
             NavigationStack { SettingsView(env: env) }
                 .tabItem { Label("Settings", systemImage: "gearshape") }
         }
+        .tint(DS.ColorToken.accent)
     }
 }
 

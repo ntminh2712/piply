@@ -50,13 +50,13 @@ struct TradesView: View {
                                             .font(.headline)
                                         Text((t.closeTime ?? t.openTime), formatter: DateFormatters.shortDateTime)
                                             .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(DS.ColorToken.textSecondary)
                                     }
                                     Spacer()
                                     VStack(alignment: .trailing, spacing: 4) {
                                         Text(t.side.rawValue.uppercased())
                                             .font(.caption)
-                                            .foregroundStyle(.secondary)
+                                            .foregroundStyle(DS.ColorToken.textSecondary)
                                         Text(formatProfit(t.profit))
                                             .font(.headline)
                                             .foregroundStyle(profitColor(t.profit))
@@ -103,7 +103,7 @@ struct TradesView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Account")
                 .font(.subheadline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(DS.ColorToken.textSecondary)
             Picker("Account", selection: $vm.selectedAccountId) {
                 ForEach(vm.accounts) { a in
                     Text("\(a.broker) • \(a.accountId)")
@@ -111,6 +111,7 @@ struct TradesView: View {
                 }
             }
             .pickerStyle(.menu)
+            .tint(DS.ColorToken.accent)
         }
     }
 
@@ -120,8 +121,8 @@ struct TradesView: View {
     }
 
     private func profitColor(_ v: Decimal?) -> Color {
-        guard let v else { return .secondary }
-        return v >= 0 ? .green : .red
+        guard let v else { return DS.ColorToken.textTertiary }
+        return v >= 0 ? DS.ColorToken.success : DS.ColorToken.danger
     }
 }
 
