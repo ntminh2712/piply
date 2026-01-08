@@ -403,27 +403,89 @@ actor MockAPIClient: APIClient {
         _ = try requireSession()
         await simulateLatency()
 
-        let trades = try await listTrades(accountId: accountId, from: from, to: to, symbol: nil, outcome: nil, limit: 10_000)
-        let profits = trades.compactMap { $0.profit }
+        let allTrades = try await listTrades(accountId: accountId, from: from, to: to, symbol: nil, outcome: nil, limit: 10_000)
+        let closedTrades = allTrades.filter { !$0.isOpen }
+        let profits = closedTrades.compactMap { $0.profit }
         let pnlRaw = profits.reduce(Decimal(0), +)
         let pnl = roundDecimal(pnlRaw, toPlaces: 2)
         let wins = profits.filter { $0 > 0 }.count
-        let count = trades.count
+        let losses = profits.filter { $0 < 0 }
+        let count = closedTrades.count
         let winRate = count == 0 ? 0 : Double(wins) / Double(count)
 
-        // MVP: simple drawdown placeholder (negative cumulative min as absolute)
-        var equity = Decimal(0)
-        var peak = Decimal(0)
+        // Calculate equity (starting from 10000, add P/L)
+        let startingEquity = Decimal(10000)
+        let equity = roundDecimal(startingEquity + pnl, toPlaces: 2)
+        
+        // Daily P/L (today's trades)
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        let todayTrades = closedTrades.filter { 
+            guard let closeTime = $0.closeTime else { return false }
+            return calendar.isDate(closeTime, inSameDayAs: Date())
+        }
+        let dailyPnL = roundDecimal(todayTrades.compactMap { $0.profit }.reduce(Decimal(0), +), toPlaces: 2)
+        
+        // Profit factor
+        let grossProfit = profits.filter { $0 > 0 }.reduce(Decimal(0), +)
+        let grossLoss = abs(profits.filter { $0 < 0 }.reduce(Decimal(0), +))
+        let profitFactor = grossLoss > 0 ? (grossProfit as NSDecimalNumber).doubleValue / (grossLoss as NSDecimalNumber).doubleValue : nil
+        
+        // Avg win/loss
+        let avgWin = wins > 0 ? roundDecimal(grossProfit / Decimal(wins), toPlaces: 2) : nil
+        let avgLoss = losses.count > 0 ? roundDecimal(grossLoss / Decimal(losses.count), toPlaces: 2) : nil
+        
+        // Drawdown calculation
+        var runningEquity = startingEquity
+        var peak = startingEquity
         var maxDD = Decimal(0)
         for p in profits {
-            equity += p
-            if equity > peak { peak = equity }
-            let dd = peak - equity
+            runningEquity += p
+            if runningEquity > peak { peak = runningEquity }
+            let dd = peak - runningEquity
             if dd > maxDD { maxDD = dd }
         }
         let maxDDRounded = roundDecimal(maxDD, toPlaces: 2)
+        
+        // Current risk (simplified: based on open trades)
+        let openTrades = try await getOpenTrades(accountId: accountId)
+        let openRisk = openTrades.count > 0 ? Decimal(openTrades.count * 2) : Decimal(0) // 2% per open trade
+        let currentRisk = roundDecimal(openRisk, toPlaces: 1)
+        
+        // Losing streak
+        var currentStreak = 0
+        var maxStreak = 0
+        var tempStreak = 0
+        for profit in profits.reversed() {
+            if profit < 0 {
+                tempStreak += 1
+                maxStreak = max(maxStreak, tempStreak)
+                if tempStreak == 1 { currentStreak = tempStreak }
+            } else {
+                if tempStreak > 0 && currentStreak == 0 { currentStreak = tempStreak }
+                tempStreak = 0
+            }
+        }
+        if tempStreak > 0 && currentStreak == 0 { currentStreak = tempStreak }
+        
+        // Overtrade warning (if more than 10 trades today)
+        let overtradeWarning = todayTrades.count > 10
 
-        return AnalyticsSummary(pnlTotal: pnl, winRate: winRate, maxDrawdown: maxDDRounded, tradeCount: count)
+        return AnalyticsSummary(
+            pnlTotal: pnl,
+            winRate: winRate,
+            maxDrawdown: maxDDRounded,
+            tradeCount: count,
+            equity: equity,
+            dailyPnL: dailyPnL,
+            profitFactor: profitFactor,
+            avgWin: avgWin,
+            avgLoss: avgLoss,
+            currentRisk: currentRisk,
+            losingStreak: currentStreak > 0 ? currentStreak : nil,
+            maxLosingStreak: maxStreak > 0 ? maxStreak : nil,
+            overtradeWarning: overtradeWarning ? true : nil
+        )
     }
 
     func getPnlSeries(accountId: UUID, from: Date?, to: Date?, bucket: PnlSeries.Bucket) async throws -> PnlSeries {
@@ -471,6 +533,179 @@ actor MockAPIClient: APIClient {
         }
         
         return PnlSeries(bucket: bucket, points: points)
+    }
+    
+    func getEquitySeries(accountId: UUID, from: Date?, to: Date?) async throws -> EquitySeries {
+        _ = try requireSession()
+        await simulateLatency()
+        
+        seedTradesIfNeeded(for: accountId)
+        let allTrades = tradesByAccount[accountId] ?? []
+        let closedTrades = allTrades.filter { $0.closeTime != nil }
+            .sorted { ($0.closeTime ?? $0.openTime) < ($1.closeTime ?? $1.openTime) }
+        
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateFormat = "yyyy-MM-dd"
+        
+        let startingEquity = Decimal(10000)
+        var runningEquity = startingEquity
+        var dailyEquity: [String: Decimal] = [:]
+        
+        // Initialize with starting equity
+        if let firstTrade = closedTrades.first {
+            let firstDate = firstTrade.openTime
+            let firstDayISO = dateFormatter.string(from: firstDate)
+            dailyEquity[firstDayISO] = startingEquity
+        }
+        
+        // Build equity curve from trades
+        for trade in closedTrades {
+            guard let closeTime = trade.closeTime else { continue }
+            let dayISO = dateFormatter.string(from: closeTime)
+            let profit = trade.profit ?? 0
+            runningEquity += profit
+            dailyEquity[dayISO] = runningEquity
+        }
+        
+        // Convert to EquityPoint array
+        let points = dailyEquity.map { EquityPoint(dayISO: $0.key, equity: roundDecimal($0.value, toPlaces: 2)) }
+            .sorted { $0.dayISO < $1.dayISO }
+        
+        // If no trades, return sample data
+        if points.isEmpty {
+            let calendar = Calendar.current
+            let now = Date()
+            var samplePoints: [EquityPoint] = []
+            var sampleEquity = startingEquity
+            
+            for dayOffset in 0..<30 {
+                let date = calendar.date(byAdding: .day, value: -dayOffset, to: now)!
+                let dayISO = dateFormatter.string(from: date)
+                let change = Decimal(Double.random(in: -50...100))
+                sampleEquity += change
+                samplePoints.append(EquityPoint(dayISO: dayISO, equity: roundDecimal(sampleEquity, toPlaces: 2)))
+            }
+            
+            return EquitySeries(points: samplePoints.reversed())
+        }
+        
+        return EquitySeries(points: points)
+    }
+    
+    func getOpenTrades(accountId: UUID) async throws -> [Trade] {
+        _ = try requireSession()
+        await simulateLatency()
+        
+        seedTradesIfNeeded(for: accountId)
+        let allTrades = tradesByAccount[accountId] ?? []
+        let openTrades = allTrades.filter { $0.closeTime == nil }
+        
+        // Generate some mock open trades
+        if openTrades.isEmpty {
+            let now = Date()
+            let symbols = ["XAUUSD", "EURUSD", "GBPUSD"]
+            var mockOpenTrades: [TradeDetail] = []
+            
+            for i in 0..<Int.random(in: 0...3) {
+                let symbol = symbols.randomElement()!
+                let trade = TradeDetail(
+                    id: UUID(),
+                    tradingAccountId: accountId,
+                    symbol: symbol,
+                    side: i % 2 == 0 ? .buy : .sell,
+                    openTime: now.addingTimeInterval(-Double(i) * 3600),
+                    closeTime: nil,
+                    openPrice: symbol.contains("USD") ? Decimal(1.0) : Decimal(2050),
+                    closePrice: nil,
+                    volume: roundDecimalFromDouble(Double.random(in: 0.01...0.5), toPlaces: 2),
+                    sl: nil,
+                    tp: nil,
+                    commission: nil,
+                    swap: nil,
+                    profit: roundDecimalFromDouble(Double.random(in: -20...30), toPlaces: 2)
+                )
+                mockOpenTrades.append(trade)
+            }
+            
+            return mockOpenTrades.map {
+                Trade(
+                    id: $0.id,
+                    tradingAccountId: $0.tradingAccountId,
+                    symbol: $0.symbol,
+                    side: $0.side,
+                    openTime: $0.openTime,
+                    closeTime: $0.closeTime,
+                    profit: $0.profit
+                )
+            }
+        }
+        
+        return openTrades.map {
+            Trade(
+                id: $0.id,
+                tradingAccountId: $0.tradingAccountId,
+                symbol: $0.symbol,
+                side: $0.side,
+                openTime: $0.openTime,
+                closeTime: $0.closeTime,
+                profit: $0.profit
+            )
+        }
+    }
+    
+    func getInsights(accountId: UUID) async throws -> [Insight] {
+        _ = try requireSession()
+        await simulateLatency()
+        
+        seedTradesIfNeeded(for: accountId)
+        let allTrades = tradesByAccount[accountId] ?? []
+        var insights: [Insight] = []
+        
+        // Time-based insight
+        let calendar = Calendar.current
+        let hourCounts = Dictionary(grouping: allTrades, by: { calendar.component(.hour, from: $0.openTime) })
+        if let bestHour = hourCounts.max(by: { $0.value.count < $1.value.count }) {
+            insights.append(Insight(
+                id: UUID(),
+                type: .timeBased,
+                title: "Best Trading Hour",
+                message: "Most trades executed at \(bestHour.key):00 with \(bestHour.value.count) trades",
+                severity: .info
+            ))
+        }
+        
+        // Pair-based insight
+        let symbolCounts = Dictionary(grouping: allTrades, by: { $0.symbol })
+        if let bestSymbol = symbolCounts.max(by: { $0.value.count < $1.value.count }) {
+            let symbolProfit = bestSymbol.value.compactMap { $0.profit }.reduce(Decimal(0), +)
+            insights.append(Insight(
+                id: UUID(),
+                type: .pairBased,
+                title: "Top Trading Pair",
+                message: "\(bestSymbol.key) has \(bestSymbol.value.count) trades with \(formatDecimal(symbolProfit)) P/L",
+                severity: symbolProfit >= 0 ? .info : .warning
+            ))
+        }
+        
+        // Behavior insight
+        let recentTrades = allTrades.suffix(10)
+        let recentWins = recentTrades.filter { ($0.profit ?? 0) > 0 }.count
+        if recentWins < 3 && recentTrades.count >= 5 {
+            insights.append(Insight(
+                id: UUID(),
+                type: .behavior,
+                title: "Recent Performance",
+                message: "Only \(recentWins) wins in last 10 trades. Consider reviewing strategy.",
+                severity: .warning
+            ))
+        }
+        
+        return insights
+    }
+    
+    private func formatDecimal(_ v: Decimal) -> String {
+        let n = NSDecimalNumber(decimal: v)
+        return n.stringValue
     }
 }
 

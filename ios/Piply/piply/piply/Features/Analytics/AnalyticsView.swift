@@ -1,7 +1,7 @@
 import SwiftUI
 import Charts
 
-struct DashboardView: View {
+struct AnalyticsView: View {
     let env: AppEnvironment
     @StateObject private var vm: DashboardViewModel
 
@@ -21,24 +21,12 @@ struct DashboardView: View {
                 if vm.accounts.isEmpty {
                     EmptyStateView(
                         title: "No accounts connected",
-                        message: "Connect an account to start syncing and unlock your dashboard.",
-                        systemImage: "link",
-                        actionTitle: "Go to Accounts",
-                        action: { vm.requestGoToAccounts = true }
+                        message: "Connect an account to start syncing and see analytics.",
+                        systemImage: "chart.bar.fill"
                     )
                     .padding(.horizontal, DS.Spacing.l)
                 } else {
                     VStack(spacing: DS.Spacing.xl) {
-                        // Insights Section - moved to top
-                        insightsSection
-                            .padding(.horizontal, DS.Spacing.l)
-
-                        // Snapshot Section
-                        if let summary = vm.summary {
-                            snapshotSection(summary: summary)
-                                .padding(.horizontal, DS.Spacing.l)
-                        }
-
                         // Performance Section
                         performanceSection
                             .padding(.horizontal, DS.Spacing.l)
@@ -48,17 +36,13 @@ struct DashboardView: View {
                             riskSection(summary: summary)
                                 .padding(.horizontal, DS.Spacing.l)
                         }
-
-                        // Activity Section
-                        activitySection
-                            .padding(.horizontal, DS.Spacing.l)
                     }
                 }
             }
             .padding(.vertical, DS.Spacing.l)
         }
         .background(DS.ColorToken.background)
-        .navigationTitle("Dashboard")
+        .navigationTitle("Analytics")
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 accountPicker
@@ -102,50 +86,6 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - Snapshot Section
-    private func snapshotSection(summary: AnalyticsSummary) -> some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.m) {
-            Text("Snapshot")
-                .font(.title2.weight(.bold))
-                .foregroundStyle(DS.ColorToken.textPrimary)
-            
-            let cols = [GridItem(.flexible(), spacing: DS.Spacing.m), GridItem(.flexible(), spacing: DS.Spacing.m)]
-            LazyVGrid(columns: cols, spacing: DS.Spacing.m) {
-                MetricCard(
-                    title: "Equity",
-                    value: summary.equity.map { formatDecimal($0) } ?? "—",
-                    change: nil,
-                    icon: "chart.line.uptrend.xyaxis",
-                    color: DS.ColorToken.metricPurple
-                )
-                
-                MetricCard(
-                    title: "Daily P/L",
-                    value: summary.dailyPnL.map { formatDecimal($0) } ?? "—",
-                    change: summary.dailyPnL.map { $0 >= 0 ? "+\(formatDecimal($0))" : formatDecimal($0) },
-                    icon: "calendar",
-                    color: summary.dailyPnL.map { $0 >= 0 ? DS.ColorToken.metricGreen : DS.ColorToken.metricPink } ?? DS.ColorToken.metricTeal
-                )
-                
-                MetricCard(
-                    title: "Drawdown",
-                    value: formatDecimal(summary.maxDrawdown),
-                    change: nil,
-                    icon: "arrow.down.circle.fill",
-                    color: DS.ColorToken.metricOrange
-                )
-                
-                MetricCard(
-                    title: "Win Rate",
-                    value: String(format: "%.1f%%", summary.winRate * 100),
-                    change: nil,
-                    icon: "target",
-                    color: DS.ColorToken.metricPurple
-                )
-            }
-        }
-    }
-    
     // MARK: - Performance Section
     private var performanceSection: some View {
         VStack(alignment: .leading, spacing: DS.Spacing.m) {
@@ -296,163 +236,10 @@ struct DashboardView: View {
             }
         }
     }
-    
-    // MARK: - Activity Section
-    private var activitySection: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.m) {
-            Text("Activity")
-                .font(.title2.weight(.bold))
-                .foregroundStyle(DS.ColorToken.textPrimary)
-            
-            // Open Trades
-            if !vm.openTrades.isEmpty {
-                openTradesSection
-                
-                // Floating PnL
-                floatingPnLSection
-            } else {
-                Text("No open trades")
-                    .font(.subheadline)
-                    .foregroundStyle(DS.ColorToken.textSecondary)
-                    .padding(DS.Spacing.l)
-                    .frame(maxWidth: .infinity)
-                    .card()
-            }
-        }
-    }
-    
-    private var openTradesSection: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.m) {
-            Text("Open Trades")
-                .font(.headline)
-                .foregroundStyle(DS.ColorToken.textPrimary)
-                .padding(.horizontal, DS.Spacing.l)
-            
-            VStack(spacing: 0) {
-                ForEach(Array(vm.openTrades.enumerated()), id: \.element.id) { index, trade in
-                    NavigationLink {
-                        TradeDetailView(env: env, tradeId: trade.id)
-                    } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(trade.symbol)
-                                    .font(.headline)
-                                    .foregroundStyle(DS.ColorToken.textPrimary)
-                                Text(trade.side.rawValue.uppercased())
-                                    .font(.caption)
-                                    .foregroundStyle(DS.ColorToken.textSecondary)
-                            }
-                            Spacer()
-                            Text("OPEN")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(DS.ColorToken.info)
-                        }
-                        .padding(DS.Spacing.l)
-                    }
-                    .buttonStyle(.plain)
-                    
-                    if index < vm.openTrades.count - 1 {
-                        Divider()
-                            .background(DS.ColorToken.border)
-                            .padding(.leading, DS.Spacing.l)
-                    }
-                }
-            }
-            .card()
-        }
-    }
-    
-    private var floatingPnLSection: some View {
-        let floatingPnL = vm.openTrades.compactMap { $0.profit }.reduce(Decimal(0), +)
-        return MetricCard(
-            title: "Floating P/L",
-            value: formatDecimal(floatingPnL),
-            change: floatingPnL >= 0 ? "+\(formatDecimal(floatingPnL))" : formatDecimal(floatingPnL),
-            icon: "chart.line.uptrend.xyaxis.circle.fill",
-            color: floatingPnL >= 0 ? DS.ColorToken.metricGreen : DS.ColorToken.metricPink
-        )
-    }
-    
-    // MARK: - Insights Section
-    private var insightsSection: some View {
-        VStack(alignment: .leading, spacing: DS.Spacing.s) {
-            Text("Insights")
-                .font(.headline)
-                .foregroundStyle(DS.ColorToken.textPrimary)
-            
-            if vm.insights.isEmpty {
-                InfoBanner(text: "Read-only journal. Sync is delayed; it may take a few minutes. Metrics are based on realized trades.")
-            } else {
-                VStack(spacing: DS.Spacing.s) {
-                    ForEach(vm.insights) { insight in
-                        insightCard(insight: insight)
-                    }
-                }
-            }
-        }
-    }
-    
-    private func insightCard(insight: Insight) -> some View {
-        HStack(alignment: .center, spacing: DS.Spacing.s) {
-            Image(systemName: iconForInsight(insight))
-                .foregroundStyle(colorForInsight(insight))
-                .font(.subheadline)
-                .frame(width: 20)
-            
-            VStack(alignment: .leading, spacing: 2) {
-                Text(insight.title)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(DS.ColorToken.textPrimary)
-                Text(insight.message)
-                    .font(.caption)
-                    .foregroundStyle(DS.ColorToken.textSecondary)
-                    .lineLimit(2)
-            }
-            
-            Spacer()
-        }
-        .padding(.horizontal, DS.Spacing.m)
-        .padding(.vertical, DS.Spacing.s)
-        .background(colorForInsight(insight).opacity(0.1))
-        .clipShape(RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.Radius.m, style: .continuous)
-                .stroke(colorForInsight(insight).opacity(0.3), lineWidth: 1)
-        )
-    }
-    
-    private func iconForInsight(_ insight: Insight) -> String {
-        switch insight.type {
-        case .timeBased: return "clock.fill"
-        case .pairBased: return "chart.bar.fill"
-        case .behavior: return "brain.head.profile"
-        }
-    }
-    
-    private func colorForInsight(_ insight: Insight) -> Color {
-        switch insight.severity {
-        case .info: return DS.ColorToken.info
-        case .warning: return DS.ColorToken.warning
-        case .critical: return DS.ColorToken.danger
-        }
-    }
-
-
 
     private func formatDecimal(_ v: Decimal) -> String {
         let n = NSDecimalNumber(decimal: v)
         return n.stringValue
     }
-
-    private func formatProfit(_ v: Decimal?) -> String {
-        guard let v else { return "—" }
-        return formatDecimal(v)
-    }
-
-    private func profitColor(_ v: Decimal?) -> Color {
-        guard let v else { return DS.ColorToken.textTertiary }
-        return v >= 0 ? DS.ColorToken.success : DS.ColorToken.danger
-    }
 }
-
 

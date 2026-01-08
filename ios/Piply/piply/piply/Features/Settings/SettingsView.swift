@@ -7,9 +7,36 @@ struct SettingsView: View {
     @State private var forceSyncFailure = false
     @State private var subscription: SubscriptionInfo?
     @State private var subscriptionError: String?
+    @State private var accounts: [TradingAccount] = []
 
     var body: some View {
         List {
+            Section("Accounts") {
+                NavigationLink {
+                    AccountsView(env: env)
+                } label: {
+                    HStack {
+                        Image(systemName: "link")
+                            .foregroundStyle(DS.ColorToken.accent)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Trading Accounts")
+                                .foregroundStyle(DS.ColorToken.textPrimary)
+                            if accounts.isEmpty {
+                                Text("No accounts connected")
+                                    .font(.caption)
+                                    .foregroundStyle(DS.ColorToken.textSecondary)
+                            } else {
+                                Text("\(accounts.count) account\(accounts.count == 1 ? "" : "s") connected")
+                                    .font(.caption)
+                                    .foregroundStyle(DS.ColorToken.textSecondary)
+                            }
+                        }
+                        Spacer()
+                    }
+                }
+            }
+
             Section("Account") {
                 Text("Logged in as")
                     .foregroundStyle(DS.ColorToken.textSecondary)
@@ -85,6 +112,7 @@ struct SettingsView: View {
         .task {
             await loadDebugState()
             await loadSubscription()
+            await loadAccounts()
         }
         .background(DS.ColorToken.background)
     }
@@ -111,6 +139,14 @@ struct SettingsView: View {
     private func applyFlags() async {
         guard let mock = env.api as? MockAPIClient else { return }
         await mock.setFlags(.init(forceInvalidAccountCredentials: forceInvalidCreds, forceSyncFailure: forceSyncFailure))
+    }
+    
+    private func loadAccounts() async {
+        do {
+            accounts = try await env.api.listTradingAccounts()
+        } catch {
+            // Silently fail - accounts view will handle errors
+        }
     }
 }
 

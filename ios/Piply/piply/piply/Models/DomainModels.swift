@@ -44,6 +44,7 @@ struct Trade: Identifiable, Codable, Equatable, Sendable {
     var openTime: Date
     var closeTime: Date?
     var profit: Decimal?
+    var isOpen: Bool { closeTime == nil }
 }
 
 struct TradeDetail: Identifiable, Codable, Equatable, Sendable {
@@ -83,6 +84,47 @@ struct AnalyticsSummary: Codable, Equatable, Sendable {
     var winRate: Double
     var maxDrawdown: Decimal
     var tradeCount: Int
+    
+    // Extended metrics
+    var equity: Decimal? // Current equity (if available)
+    var dailyPnL: Decimal? // Today's P/L
+    var profitFactor: Double? // Gross profit / Gross loss
+    var avgWin: Decimal? // Average winning trade
+    var avgLoss: Decimal? // Average losing trade
+    var currentRisk: Decimal? // Current risk percentage
+    var losingStreak: Int? // Current losing streak
+    var maxLosingStreak: Int? // Maximum losing streak
+    var overtradeWarning: Bool? // True if overtrading detected
+}
+
+struct EquityPoint: Codable, Equatable, Sendable, Identifiable {
+    var id: String { dayISO }
+    let dayISO: String // YYYY-MM-DD
+    let equity: Decimal
+}
+
+struct EquitySeries: Codable, Equatable, Sendable {
+    let points: [EquityPoint]
+}
+
+struct Insight: Codable, Equatable, Sendable, Identifiable {
+    let id: UUID
+    let type: InsightType
+    let title: String
+    let message: String
+    let severity: InsightSeverity
+}
+
+enum InsightType: String, Codable, Sendable {
+    case timeBased
+    case pairBased
+    case behavior
+}
+
+enum InsightSeverity: String, Codable, Sendable {
+    case info
+    case warning
+    case critical
 }
 
 struct PnlPoint: Codable, Equatable, Sendable, Identifiable {

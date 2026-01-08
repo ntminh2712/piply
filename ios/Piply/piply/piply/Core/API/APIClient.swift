@@ -31,6 +31,9 @@ protocol APIClient: Sendable {
     // Analytics
     func getAnalyticsSummary(accountId: UUID, from: Date?, to: Date?) async throws -> AnalyticsSummary
     func getPnlSeries(accountId: UUID, from: Date?, to: Date?, bucket: PnlSeries.Bucket) async throws -> PnlSeries
+    func getEquitySeries(accountId: UUID, from: Date?, to: Date?) async throws -> EquitySeries
+    func getOpenTrades(accountId: UUID) async throws -> [Trade]
+    func getInsights(accountId: UUID) async throws -> [Insight]
 }
 
 

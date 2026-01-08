@@ -23,6 +23,12 @@ struct AccountsView: View {
                 PaywallView(message: vm.paywallMessage ?? "Upgrade to Pro to unlock more accounts.")
             }
     }
+    
+    private func syncAllAccounts() async {
+        for account in vm.accounts {
+            await vm.triggerSync(accountId: account.id)
+        }
+    }
 
     private var content: some View {
         List {
@@ -73,6 +79,16 @@ struct AccountsView: View {
                     showAdd = true
                 } label: {
                     Image(systemName: "plus")
+                }
+            }
+            
+            if !vm.accounts.isEmpty {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
+                        Task { await syncAllAccounts() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
                 }
             }
         }

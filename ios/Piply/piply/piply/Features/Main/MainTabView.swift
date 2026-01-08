@@ -8,6 +8,9 @@ struct MainTabView: View {
             NavigationStack { DashboardView(env: env) }
                 .tabItem { Label("Dashboard", systemImage: "chart.line.uptrend.xyaxis") }
 
+            NavigationStack { AnalyticsView(env: env) }
+                .tabItem { Label("Analytics", systemImage: "chart.bar.fill") }
+
             NavigationStack { TradesView(env: env) }
                 .tabItem { Label("Trades", systemImage: "list.bullet.rectangle") }
 
